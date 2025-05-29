@@ -9,7 +9,20 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // Initialize enabled state when service worker starts
 chrome.storage.sync.get("enabled", (data) => {
-  currentEnabledState = data.enabled !== undefined ? data.enabled : true;
+  if (chrome.runtime.lastError) {
+    console.error("Error getting 'enabled' state from storage:", chrome.runtime.lastError.message);
+    // Default to true or handle error appropriately if storage access fails
+    currentEnabledState = true;
+    return;
+  }
+  // data should be an object, e.g., {} if 'enabled' is not set,
+  // or { enabled: true/false } if it is set.
+  if (data && typeof data === 'object') {
+    currentEnabledState = data.enabled !== undefined ? data.enabled : true;
+  } else {
+    console.warn("Storage.sync.get 'enabled' returned unexpected data format, defaulting to true. Data:", data);
+    currentEnabledState = true;
+  }
 });
 
 // Listen for storage changes to keep currentEnabledState in sync
