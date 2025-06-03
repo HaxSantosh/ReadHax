@@ -4,14 +4,15 @@
   <title>ReadHax</title>
   <link rel="stylesheet" href="extension.css" />
 </head>
-<body>
-  <div class="container">
+<body>  <div class="container">
     <h3>~ ReadHax ~</h3>
-    <label class="switch">
-      <input type="checkbox" id="toggleSpeech">
-      <span class="slider round"></span>
-    </label>
-    <span id="statusText" style="margin-left: 8px; vertical-align: middle;">Loading...</span>
+    <div class="toggle-container">
+      <label class="switch">
+        <input type="checkbox" id="toggleSpeech">
+        <span class="slider round"></span>
+      </label>
+      <div id="statusText" class="status-text">I'm Loading...</div>
+    </div>
     <p class="info">Press <kbd>Ctrl+Shift+H</kbd> to read selected text</p>
     <p class="info">Press <kbd>Alt+Shift+H</kbd> to stop reading</p>
     <a class="email" href="mailto:haxsantosh@gmail.com">@HaxSantosh</a>

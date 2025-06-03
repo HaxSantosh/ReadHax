@@ -75,6 +75,25 @@ input:checked + .slider:before {
   color: #81D4FA;
 }
 
+.toggle-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.status-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: #98c379;
+  text-align: center;
+  min-height: 20px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(152, 195, 121, 0.1);
+}
+
 @keyframes fadeIn {
   from {opacity: 0;}
   to {opacity: 1;}

@@ -2,8 +2,13 @@
   "manifest_version": 3,
   "name": "ReadHax",
   "description": "Reads selected text with synonyms, Hindi meaning, and an example.",
-  "version": "1.0",
-  "permissions": ["scripting", "activeTab", "storage"],
+  "version": "1.0",  "permissions": ["scripting", "activeTab", "storage"],
+  "host_permissions": [
+    "*://*.google.com/*",
+    "*://*.google.co.in/*",
+    "https://api.dictionaryapi.dev/*",
+    "https://translate.googleapis.com/*"
+  ],
   "background": {
     "service_worker": "extension.js"
   },
@@ -26,17 +31,15 @@
       "suggested_key": {
         "default": "Ctrl+Shift+Y"
       },
-      "description": "Opens the popup"
-    },
-    "trigger_popup": {
+      "description": "Opens the popup"    },    "trigger_popup": {
       "suggested_key": {
-        "default": "Ctrl+Shift+H"
+        "default": "Ctrl+Shift+R"
       },
-      "description": "Read selected text"
+      "description": "Show translation and explanation"
     },
     "stop_speaking": {
       "suggested_key": {
-        "default": "Alt+Shift+H"
+        "default": "Alt+Shift+S"
       },
       "description": "Stop reading"
     }

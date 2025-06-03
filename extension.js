@@ -43,51 +43,86 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true; // Indicates async response possibility
 });
 
-// Listener for commands defined in manifest.json
-chrome.commands.onCommand.addListener(async (command, tab) => {
-  console.log(`Command received: ${command}`);
-  // Ensure 'enabled' state is fresh from storage for command execution
-  const storageData = await chrome.storage.sync.get("enabled");
-  currentEnabledState = storageData.enabled !== undefined ? storageData.enabled : true;
-
-  if (!currentEnabledState && command === "trigger_popup") {
-    console.log("ReadHax is disabled. Command ignored.");
+// Handle keyboard commands
+chrome.commands.onCommand.addListener(async (command) => {
+  console.log('Command received:', command);
+  if (!currentEnabledState) {
+    console.log('Extension is disabled, ignoring command');
     return;
   }
 
-  if (command === "trigger_popup") { // Corresponds to "Read selected text"
-    if (tab && tab.id) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+      console.error("No active tab found");
+      return;
+    }
+
+    if (command === "trigger_popup") {
+      console.log('Triggering popup for tab:', tab.id);
+      
+      let selectedText;
+      
+      // Try getting selected text from content script first
       try {
-        const results = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          function: getSelectedTextFromPage,
-        });
-        if (results && results[0] && results[0].result) {
-          const selectedText = results[0].result;
-          if (selectedText) {
-            await processSelection(selectedText, tab.id);
-          } else {
-            console.log("No text selected on the page.");
-            // Optionally, send a message to content script to show a "no text selected" notification
-          }
-        }
-      } catch (e) {
-        console.error("Error executing script to get selection:", e);
-        // This can happen on restricted pages (e.g., chrome:// URLs, store)
-        // Inform the user if possible, or log.
-         if (tab && tab.id) {
-            chrome.tabs.sendMessage(tab.id, {
-                action: "showPopup",
-                error: "Cannot access selected text on this page."
-            }).catch(err => console.warn("Failed to send error to tab:", err));
+        const response = await chrome.tabs.sendMessage(tab.id, { action: "getSelectedText" });
+        selectedText = response?.selectedText;
+      } catch (contentScriptError) {
+        console.log('Content script not ready, trying executeScript');
+        // Fall back to executeScript if content script isn't ready
+        try {
+          const [result] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => window.getSelection().toString().trim()
+          });
+          selectedText = result.result;
+        } catch (executeError) {
+          console.error('Failed to get selected text:', executeError);
+          // Show error to user
+          chrome.tabs.sendMessage(tab.id, {
+            action: "showPopup",
+            error: "Could not access selected text. Please try again."
+          }).catch(console.error);
+          return;
         }
       }
+
+      if (!selectedText) {
+        console.log("No text selected");
+        chrome.tabs.sendMessage(tab.id, {
+          action: "showPopup",
+          error: "Please select some text first."
+        }).catch(console.error);
+        return;
+      }
+
+      try {
+        await processSelection(selectedText, tab.id);
+      } catch (processError) {
+        console.error("Error processing selection:", processError);
+        chrome.tabs.sendMessage(tab.id, {
+          action: "showPopup",
+          error: "Could not process the selected text. Please try a different selection."
+        }).catch(console.error);
+      }
+    } else if (command === "stop_speaking") {
+      chrome.tabs.sendMessage(tab.id, { action: "stopSpeaking" })
+        .catch(error => console.error("Error stopping speech:", error));
     }
-  } else if (command === "stop_speaking") {
-    window.speechSynthesis.cancel();
-    console.log("Speech stopped by command.");
+  } catch (error) {
+    console.error("Error handling command:", command, error);
   }
 });
+
+async function fetchTranslationAndMeaning(text) {
+    // This is a placeholder - implement your actual translation and meaning lookup logic here
+    // You might want to call your translation API or dictionary service
+    return {
+        synonyms: ["Loading..."],
+        example: "Loading example...",
+        hindi: "अनुवाद लोड हो रहा है..." // "Translation is loading..." in Hindi
+    };
+}
 
 // This function is injected into the page to get the selected text
 function getSelectedTextFromPage() {
@@ -95,64 +130,167 @@ function getSelectedTextFromPage() {
 }
 
 async function processSelection(selectedText, tabId) {
-  if (!selectedText) return;
+  if (!selectedText) {
+    chrome.tabs.sendMessage(tabId, {
+      action: "showPopup",
+      error: "Please select some text first."
+    });
+    return;
+  }
+
+  const cleanedText = selectedText.trim();
+  console.log("Processing selection:", cleanedText);
 
   try {
-    const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(selectedText)}`);
-    if (!response.ok) {
-      console.error("Dictionary API error:", response.status, await response.text());
-      chrome.tabs.sendMessage(tabId, { action: "showPopup", error: `Definition not found for "${selectedText}".` });
-      return;
+    // Start translation immediately
+    const translationPromise = translateToHindi(cleanedText);
+
+    // Check if we should try dictionary lookup
+    const isDictionaryWord = cleanedText.split(/\s+/).length === 1 && /^[a-zA-Z]+$/.test(cleanedText);
+    let dictData = null;
+
+    if (isDictionaryWord) {
+      try {
+        console.log("Fetching dictionary data for:", cleanedText);
+        const response = await fetch(
+          `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(cleanedText.toLowerCase())}`
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data?.[0]?.meanings?.[0]) {
+            dictData = data[0];
+          }
+        } else if (response.status === 404) {
+          console.log("Word not found in dictionary");
+        } else {
+          console.error("Dictionary API error:", response.status);
+        }
+      } catch (dictError) {
+        console.error("Dictionary API error:", dictError);
+      }
     }
-    const data = await response.json();
 
-    const firstEntry = data && data[0];
-    const firstMeaning = firstEntry?.meanings[0];
-    const firstDefinition = firstMeaning?.definitions[0];
+    // Wait for translation
+    const translation = await translationPromise;
+    
+    if (!translation || translation === "Translation unavailable") {
+      throw new Error("Translation service unavailable");
+    }
 
-    const synonyms = firstDefinition?.synonyms?.slice(0, 3) || [];
-    const example = firstDefinition?.example || "";
+    // Prepare popup data
+    const popupData = {
+      word: cleanedText,
+      hindi: translation,
+      synonyms: ["No synonyms available"],
+      example: "No example available"
+    };
 
-    const hindiTranslation = await translateToHindi(selectedText);
+    if (dictData?.meanings?.[0]) {
+      const meaning = dictData.meanings[0];
+      if (meaning.synonyms?.length > 0) {
+        popupData.synonyms = meaning.synonyms.slice(0, 3);
+      }
+      if (meaning.definitions?.[0]?.example) {
+        popupData.example = meaning.definitions[0].example;
+      }
+    }
 
+    // Send data to content script
+    await chrome.tabs.sendMessage(tabId, {
+      action: "showPopup",
+      data: popupData
+    });
+
+    // Prepare speech text
+    const speechText = `${cleanedText}. In Hindi: ${translation}.${
+      popupData.synonyms.length > 0 && popupData.synonyms[0] !== "No synonyms available"
+        ? ` Synonyms: ${popupData.synonyms.join(", ")}.`
+        : ""
+    }${
+      popupData.example !== "No example available"
+        ? ` Example: ${popupData.example}`
+        : ""
+    }`;
+
+    const speech = new SpeechSynthesisUtterance(speechText);
+    speech.lang = "en-US";
+    window.speechSynthesis.speak(speech);
+
+  } catch (error) {
+    console.error("Error processing selection:", error);
+    let errorMessage = "An unexpected error occurred.";
+
+    if (error.message.includes("Translation service unavailable")) {
+      errorMessage = "Translation service is currently unavailable. Please try again later.";
+    } else if (error.name === "TypeError" || error.name === "NetworkError") {
+      errorMessage = "Network error. Please check your internet connection.";
+    }
+
+    chrome.tabs.sendMessage(tabId, {
+      action: "showPopup",
+      error: errorMessage
+    });
+  }
+}
+
+// Update translateToHindi function for better error handling
+async function translateToHindi(text) {
+  try {
+    const params = new URLSearchParams({
+      client: "gtx",
+      sl: "en",
+      tl: "hi",
+      dt: "t",
+      q: text
+    });
+
+    const res = await fetch(
+      `https://translate.googleapis.com/translate_a/single?${params.toString()}`
+    );
+
+    if (!res.ok) {
+      throw new Error(`Translation API error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (!data?.[0]?.[0]?.[0]) {
+      throw new Error("Invalid translation response format");
+    }
+
+    return data[0][0][0];
+  } catch (err) {
+    console.error("Translation error:", err);
+    return "Translation unavailable";
+  }
+}
+
+async function handleTranslationOnly(text, tabId) {
+  try {
+    const hindiTranslation = await translateToHindi(text);
+    
     // Send data to content script to show popup
     chrome.tabs.sendMessage(tabId, {
       action: "showPopup",
       data: {
-        word: selectedText,
-        synonyms: synonyms.length > 0 ? synonyms : ["No synonyms found"],
-        example: example || "No example available",
+        word: text,
+        synonyms: ["Translation only"],
+        example: "This is a phrase or word not found in dictionary",
         hindi: hindiTranslation,
       }
     }).catch(err => console.warn("Failed to send message to tab:", tabId, err));
 
-    const speechText = `${selectedText}. In Hindi: ${hindiTranslation}. ${synonyms.length > 0 ? `Synonyms: ${synonyms.join(", ")}.` : ''} ${example ? `Example: ${example}` : ''}`;
+    // Read the text and translation
+    const speechText = `${text}. In Hindi: ${hindiTranslation}.`;
     const speech = new SpeechSynthesisUtterance(speechText);
     speech.lang = 'en-US';
     window.speechSynthesis.speak(speech);
 
   } catch (error) {
-    console.error("Error in processSelection:", error);
-    chrome.tabs.sendMessage(tabId, { action: "showPopup", error: "An error occurred while fetching data." })
-      .catch(err => console.warn("Failed to send error message to tab:", tabId, err));
-  }
-}
-
-async function translateToHindi(text) {
-  try {
-    const params = new URLSearchParams({ client: 'gtx', sl: 'en', tl: 'hi', dt: 't', q: text });
-    const res = await fetch(`https://translate.googleapis.com/translate_a/single?${params.toString()}`);
-    if (!res.ok) {
-      console.error("Translation API error:", res.status, await res.text());
-      return "Translation failed (API error)";
-    }
-    const data = await res.json();
-    if (data && data[0] && data[0][0] && data[0][0][0]) {
-      return data[0][0][0];
-    }
-    return "Translation format error";
-  } catch (err) {
-    console.error("Error translating to Hindi:", err);
-    return "Translation failed (network/script error)";
+    console.error("Error in handleTranslationOnly:", error);
+    chrome.tabs.sendMessage(tabId, { 
+      action: "showPopup", 
+      error: "Could not translate the text." 
+    }).catch(err => console.warn("Failed to send error message to tab:", tabId, err));
   }
 }
